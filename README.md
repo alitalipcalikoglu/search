@@ -56,7 +56,7 @@ Errors are JSON: `{ "error": { "code", "message", "details?" } }`.
 
 | Method | Path | Role | Purpose |
 |---|---|---|---|
-| GET | `/health`, `/ready` | none | Liveness; readiness (database, cached 10 s). |
+| GET | `/health`, `/ready`, `/v1/info` | none | Liveness; readiness (database, cached 10 s); service identity (version, API version, capabilities, schema version, service-core version). |
 | POST | `/v1/indexes` | write | `{ name, description?, weights?, facets? }` → `201 { index }`. |
 | GET | `/v1/indexes`, `/v1/indexes/:name` | read | Visible indexes with document counts; one index. |
 | PATCH / DELETE | `/v1/indexes/:name` | write | `{ description?, weights?, facets? }`; delete with its documents. |
