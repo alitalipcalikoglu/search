@@ -70,7 +70,7 @@ export class Config {
    * @returns {ApiKey[]}
    */
   static #parseApiKeys(raw) {
-    return parseApiKeys(raw, 'SEARCH_API_KEYS', { roles: Config.ROLES, scopePattern: Config.INDEX_PATTERN, scopeNoun: 'index', minSecretLength: Config.MIN_SECRET_LENGTH })
+    return parseApiKeys(raw, 'SEARCH_API_KEYS', { roles: Config.ROLES, scopePattern: Config.INDEX_PATTERN, scopeNoun: 'index', minSecretLength: Config.MIN_SECRET_LENGTH, roleErrorMessage: () => 'must be read, write or readwrite' })
       .map(({ id, secret, role, scopes }) => ({ id, secret, role: /** @type {KeyRole} */ (role), indexes: scopes }));
   }
 }
