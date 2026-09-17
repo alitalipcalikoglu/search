@@ -42,6 +42,14 @@ npm run typecheck
 - **Folding**: text is indexed and matched after lower-casing, removing diacritics and unifying `ı/İ/i`; highlights mark the original text and are HTML-escaped around `<mark>`.
 - **Keys** are `id:secret[:role[:indexes]]`: roles `read` / `write` / `readwrite`; an index scope hides and protects every other index.
 
+## Boundaries
+
+**Purpose:** full-text search over documents other services index into it.
+
+**Responsibilities:** index and document CRUD; BM25-ranked search with highlights and facets; prefix suggestions.
+
+**Non-responsibilities:** not the system of record for indexed documents — the owning service's own database stays authoritative; search only holds a denormalized copy for querying, and losing it never loses data. Not a general analytics or aggregation engine beyond facet counts.
+
 ## API
 
 Errors are JSON: `{ "error": { "code", "message", "details?" } }`.

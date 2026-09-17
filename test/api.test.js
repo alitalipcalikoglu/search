@@ -1,8 +1,10 @@
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 import { test } from 'node:test';
 import { PRODUCTS, READ_KEY, RW_KEY, SHOP_KEY, WRITE_KEY, bearer, buildApp } from './helpers.js';
 
 const json = (/** @type {import('light-my-request').Response} */ r) => JSON.parse(r.body);
+const SEARCH_VERSION = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8')).version;
 
 test('API: probes, auth, roles and index scoping', async (t) => {
   const { app } = await buildApp();
@@ -21,6 +23,20 @@ test('API: probes, auth, roles and index scoping', async (t) => {
   assert.match(json(res).error.message, /no access to index "internal"/);
   assert.equal((await app.inject({ method: 'POST', url: '/v1/indexes', headers: bearer(SHOP_KEY), payload: { name: 'other' } })).statusCode, 403, 'scoped key cannot create outside its scope');
   assert.equal((await app.inject({ url: '/metrics', headers: bearer(WRITE_KEY) })).statusCode, 403);
+});
+
+test('API: info', async (t) => {
+  const { app } = await buildApp(undefined, { version: SEARCH_VERSION });
+  t.after(() => app.close());
+  const res = await app.inject({ url: '/v1/info' });
+  assert.equal(res.statusCode, 200);
+  const body = json(res);
+  assert.deepEqual(
+    { service: body.service, version: body.version, apiVersion: body.apiVersion, capabilities: body.capabilities },
+    { service: 'search', version: SEARCH_VERSION, apiVersion: 'v1', capabilities: ['bm25-ranking', 'facets', 'highlights', 'suggestions'] },
+  );
+  assert.equal(typeof body.schemaVersion, 'number');
+  assert.equal(typeof body.serviceCore, 'string');
 });
 
 test('API: index lifecycle, bulk indexing, documents, search GET and POST, facets, suggest, stats, metrics', async (t) => {
