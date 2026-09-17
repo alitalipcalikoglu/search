@@ -110,6 +110,10 @@ Class-based; dependencies are injected through constructors, `src/application.js
 - Language-specific stemming: folding and prefix matching go a long way; stemming would need per-language rules.
 - Cluster / replication: one process per database file; split indexes across instances to scale.
 
+## Audit events
+
+With `AUDIT_URL` and `AUDIT_API_KEY` set, every completed write request is forwarded to the audit service as one event (`success`, or `denied` on 403) with the calling key as actor, the affected entity as target, client IP, user agent and request id. Events are buffered and sent in batches; the audit service being down never fails a request. Actions: see [examples/audit-events.md](examples/audit-events.md).
+
 ## License
 
 MIT, see [LICENSE](LICENSE).

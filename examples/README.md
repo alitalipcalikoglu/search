@@ -13,6 +13,7 @@ Scenario-driven walkthroughs of every feature. Requests to `/v1/*` need `Authori
 | [Site search integration](integration.md) | A backend endpoint and a client that debounces, handles errors and falls back |
 | [API keys and roles](keys-and-roles.md) | Read, write, readwrite; scoping a key to indexes; error codes |
 | [Operations](operations.md) | Health, readiness, metrics, environment, PM2, Docker, backups, reindexing |
+| [Audit events](audit-events.md) | Which write actions are forwarded to the audit service, event shape, configuration |
 
 Set up once for the examples:
 
