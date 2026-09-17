@@ -16,6 +16,35 @@ type-ahead suggestions — all on SQLite FTS5, with case/diacritic/Turkish-dotte
 
 No other service or external system is called by `search`.
 
+## Durability classes (Stage 10)
+Three, verified against the code (`src/`), not assumed:
+- **Authoritative, durable**: `indexes`, `documents`, `documents_fts`, `document_attrs` — SQLite,
+  `DB_PATH`. This service is the only copy of the indexed content there is; there is no separate
+  "primary" store elsewhere that `search` re-indexes from, and no code path here that rebuilds this
+  data from anything else. Losing this file loses the index for good, exactly like any of this
+  platform's other stateful services losing their database — not a cache, not regenerable. See
+  "Persistence"/"Backup"/"Restore" below.
+- **Rebuildable state**: none exists in this service. There is no derived cache, no materialized
+  view, no secondary index that could be dropped and regenerated from the authoritative tables above
+  — `documents_fts` is written directly, in the same transaction as `documents` (see "Persistence"),
+  not maintained by a separate rebuildable job.
+- **Ephemeral, process-local, non-durable**: `SearchService.searches` (a plain in-memory `Map`) is
+  the *sole* source — durable or not — of every "how many searches happened" number this service
+  reports (`GET /metrics`'s `search_queries_total`, `GET /v1/stats`'s `searchesSinceStart`, each
+  index's `searchesSinceStart` in `GET /v1/indexes`). It resets to `0` on every restart with **no
+  durable fallback to reconcile against** — unlike, say, `ratelimit`'s durable `decisions` table
+  alongside its own process-local tally, `search` has only the one, non-durable number. See
+  "Metrics" below for the full comparison.
+
+**Restart behavior**: the authoritative tables above survive a restart unchanged (ordinary SQLite
+durability, WAL + `synchronous = NORMAL`); `SearchService.searches` does not — it starts back at
+`{}` every time, silently, with nothing logged or exposed to say so.
+
+**Backup expectations**: back up `DB_PATH` (plus its WAL/SHM sidecars while running) — that alone is
+the complete, sufficient backup, since the FTS5 index lives inside the same file (see "Backup"
+below) and there is nothing rebuildable or ephemeral worth preserving separately (ephemeral counts
+are, by definition, not worth backing up — they are expected to reset).
+
 ## Persistence
 Engine: SQLite via `node:sqlite`'s `DatabaseSync` (`src/db.js`), WAL journal mode, `synchronous =
 NORMAL`, `busy_timeout = 5000`, foreign keys on. File location: `DB_PATH`, default
