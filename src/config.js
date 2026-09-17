@@ -21,6 +21,7 @@ export class Config {
     this.audit = v.audit;
     this.bodyLimit = v.bodyLimit;
     this.dbPath = v.dbPath;
+    this.dbBackupDir = v.dbBackupDir;
     this.apiKeys = v.apiKeys;
     this.rateLimitMax = v.rateLimitMax;
     this.maxBatch = v.maxBatch;
@@ -52,6 +53,7 @@ export class Config {
       audit: parseAudit(r),
       bodyLimit: r.integer('BODY_LIMIT', 8_388_608, { min: 1_024 }),
       dbPath: r.optional('DB_PATH') || './data/search.db',
+      dbBackupDir: r.optional('DB_BACKUP_DIR') || undefined,
       apiKeys: Config.#parseApiKeys(r.required('SEARCH_API_KEYS')),
       rateLimitMax: r.integer('RATE_LIMIT_MAX', 1_200, { min: 1 }),
       maxBatch: r.integer('MAX_BATCH', 500, { min: 1, max: 10_000 }),
