@@ -14,7 +14,7 @@ test('Config: rejects bad input', () => {
   const bad = (/** @type {Record<string,string>} */ o, /** @type {RegExp} */ re) => assert.throws(() => Config.fromEnv(testEnv(o)), (e) => e instanceof ConfigError && re.test(e.message));
   bad({ SEARCH_API_KEYS: '' }, /SEARCH_API_KEYS is required/);
   bad({ SEARCH_API_KEYS: 'a:short' }, /at least 32/);
-  bad({ SEARCH_API_KEYS: `a:${'a'.repeat(40)}:owner` }, /read, write or readwrite/);
+  bad({ SEARCH_API_KEYS: `a:${'a'.repeat(40)}:owner` }, /one of read, write, readwrite/); // wording now matches every other service's role-list message (service-core's parseApiKeys)
   bad({ SEARCH_API_KEYS: `a:${'a'.repeat(40)}:read:Bad Index` }, /invalid index/);
   bad({ MAX_BATCH: '0' }, />= 1/);
   bad({ TLS_CERT_PATH: '/x.pem' }, /must be set together/);
