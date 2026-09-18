@@ -124,7 +124,7 @@ With `AUDIT_URL` and `AUDIT_API_KEY` set, every completed write request is forwa
 
 ## Scaling model
 
-One process owns one SQLite file (`instances: 1`). Every write (upsert, delete, clear, remove-index)
+**B — single-node stateful.** One process owns one SQLite file (`instances: 1`). Every write (upsert, delete, clear, remove-index)
 runs inside a `BEGIN IMMEDIATE` transaction, so two processes sharing one file would have correct,
 serialized writes — there's no read-then-write race like `shortlink`'s redirect path. What would not
 be consistent is metrics: every "searches" number this service reports (`/metrics`, `/v1/stats`,
@@ -135,7 +135,7 @@ on restart and would split unreconciled across two instances. See
 ## Observability
 
 Requests are logged with `reqId` (accepts or generates `X-Request-Id`; no `traceparent` support —
-gateway-only so far). `/health` is a static check; `/ready` pings the database, cached for 10s.
+implemented in gateway and console so far). `/health` is a static check; `/ready` pings the database, cached for 10s.
 Unlike `ratelimit`, there is no durable table backing search-query counts — `search_queries_total`
 and `searchesSinceStart` are the same in-memory counter everywhere they appear. See
 [docs/READINESS.md](docs/READINESS.md) for the full contract.
