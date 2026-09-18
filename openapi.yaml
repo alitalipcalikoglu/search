@@ -1,0 +1,1235 @@
+openapi: 3.1.0
+info:
+  title: search
+  version: "1.0.0"
+  description: >-
+    Full-text search over your own data: named indexes, bulk-indexed documents, BM25-ranked
+    queries with field weights, attribute filters and facet counts, highlighted results, prefix
+    suggestions. SQLite FTS5, no external search engine. Errors are always
+    `{ "error": { "code", "message", "details?" } }`.
+
+servers:
+  - url: http://localhost:3010
+    description: Local default (PORT=3010).
+
+security:
+  - BearerAuth: []
+
+tags:
+  - name: system
+    description: Liveness, readiness, service identity, metrics. Not under `/v1`.
+  - name: indexes
+    description: Index lifecycle (write role) and listing (read role).
+  - name: documents
+    description: Bulk upsert, browse, fetch and delete of documents within an index.
+  - name: search
+    description: BM25-ranked search (GET query form and POST body form) and prefix suggestions.
+  - name: stats
+    description: Aggregate counters across the visible indexes.
+
+paths:
+  /health:
+    get:
+      operationId: search.system.health
+      tags: [system]
+      summary: Liveness probe
+      description: >-
+        Always `200 { status: "ok" }`. No dependency check, not rate-limited, not authenticated.
+      security: []
+      x-stack-visibility: public
+      responses:
+        "200":
+          description: Process is up.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/HealthResponse"
+
+  /ready:
+    get:
+      operationId: search.system.ready
+      tags: [system]
+      summary: Readiness probe
+      description: >-
+        Pings the database; the result is cached for 10 seconds. Not authenticated, not
+        rate-limited.
+      security: []
+      x-stack-visibility: public
+      responses:
+        "200":
+          description: Database reachable.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ReadyResponse"
+        "503":
+          description: Database unreachable, or the cached check last failed.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ReadyUnavailableResponse"
+
+  /v1/info:
+    get:
+      operationId: search.system.info
+      tags: [system]
+      summary: Service identity
+      description: >-
+        Static instance identity: package version, `/v1` API contract version, capability list
+        (fixed for this service, not instance-variable), the open SQLite schema version, and the
+        `@atc-web/service-core` version actually running. Not authenticated, not rate-limited.
+      security: []
+      x-stack-visibility: public
+      responses:
+        "200":
+          description: Service identity.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/InfoResponse"
+
+  /metrics:
+    get:
+      operationId: search.system.metrics
+      tags: [system]
+      summary: Prometheus metrics
+      description: >-
+        Prometheus text exposition format. Requires a `read`-role API key but, unlike every other
+        authenticated route, is **not** index-scoped: a key scoped to a subset of indexes still
+        sees per-index metric lines for every index, not only its own. Also, unlike every `/v1/*`
+        route, it is not rate-limited and it is not under `/v1`.
+      x-stack-visibility: operational
+      x-required-role: read
+      x-index-scoped: false
+      responses:
+        "200":
+          description: Metrics in Prometheus text format.
+          content:
+            text/plain:
+              schema:
+                type: string
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
+  /v1/indexes:
+    post:
+      operationId: search.indexes.create
+      tags: [indexes]
+      summary: Create an index
+      description: >-
+        Requires a `write`-role key. If the key is index-scoped, the requested `name` must be in
+        its scope (checked after body validation, before creation) or this returns 403 — a scoped
+        key can preemptively be issued for an index that does not exist yet.
+      x-stack-visibility: authenticated
+      x-required-role: write
+      x-index-scoped: true
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateIndexRequest"
+      responses:
+        "201":
+          description: Index created.
+          headers:
+            location:
+              description: "`/v1/indexes/{name}` of the new index."
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/IndexResponse"
+        "400":
+          description: >-
+            `INVALID_QUERY` (a weight is out of the 0-100 range, or a facet key is not a valid
+            attribute key, or more than 20 facets) or `VALIDATION_FAILED` (request body fails
+            schema validation, e.g. bad `name` pattern).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "409":
+          $ref: "#/components/responses/IndexExists"
+        "429":
+          $ref: "#/components/responses/RateLimited"
+
+    get:
+      operationId: search.indexes.list
+      tags: [indexes]
+      summary: List visible indexes
+      description: >-
+        Requires a `read`-role key. Returns only the indexes in the key's scope (or every index
+        for an unscoped key), each with its live document count and search counter.
+      x-stack-visibility: authenticated
+      x-required-role: read
+      x-index-scoped: true
+      responses:
+        "200":
+          description: Visible indexes.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/IndexListResponse"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "429":
+          $ref: "#/components/responses/RateLimited"
+
+  /v1/indexes/{name}:
+    parameters:
+      - $ref: "#/components/parameters/IndexName"
+    get:
+      operationId: search.indexes.get
+      tags: [indexes]
+      summary: Get one index
+      description: Requires a `read`-role key scoped to this index (or unscoped).
+      x-stack-visibility: authenticated
+      x-required-role: read
+      x-index-scoped: true
+      responses:
+        "200":
+          description: The index.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/IndexResponse"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/IndexNotFound"
+        "429":
+          $ref: "#/components/responses/RateLimited"
+
+    patch:
+      operationId: search.indexes.patch
+      tags: [indexes]
+      summary: Update an index
+      description: >-
+        Requires a `write`-role key scoped to this index (or unscoped). At least one of
+        `description`, `weights`, `facets` is required; each given field replaces the
+        corresponding stored value in full (`weights`/`facets` are not merged key-by-key beyond
+        what the domain layer does internally with existing weights).
+      x-stack-visibility: authenticated
+      x-required-role: write
+      x-index-scoped: true
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PatchIndexRequest"
+      responses:
+        "200":
+          description: The updated index.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/IndexResponse"
+        "400":
+          description: >-
+            `INVALID_QUERY` (a weight out of range, or an invalid/too-many facet keys) or
+            `VALIDATION_FAILED` (body fails schema validation, e.g. empty patch object).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/IndexNotFound"
+        "429":
+          $ref: "#/components/responses/RateLimited"
+
+    delete:
+      operationId: search.indexes.delete
+      tags: [indexes]
+      summary: Delete an index
+      description: >-
+        Requires a `write`-role key scoped to this index (or unscoped). Deletes the index and
+        every document in it, in one transaction.
+      x-stack-visibility: authenticated
+      x-required-role: write
+      x-index-scoped: true
+      responses:
+        "204":
+          description: Index (and its documents) deleted.
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/IndexNotFound"
+        "429":
+          $ref: "#/components/responses/RateLimited"
+
+  /v1/indexes/{name}/clear:
+    parameters:
+      - $ref: "#/components/parameters/IndexName"
+    post:
+      operationId: search.indexes.clear
+      tags: [indexes]
+      summary: Remove every document from an index
+      description: >-
+        Requires a `write`-role key scoped to this index (or unscoped). The index itself (its
+        settings) is kept; only its documents are removed.
+      x-stack-visibility: authenticated
+      x-required-role: write
+      x-index-scoped: true
+      responses:
+        "200":
+          description: Documents removed.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ClearResult"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/IndexNotFound"
+        "429":
+          $ref: "#/components/responses/RateLimited"
+
+  /v1/indexes/{name}/documents:
+    parameters:
+      - $ref: "#/components/parameters/IndexName"
+    put:
+      operationId: search.documents.upsert
+      tags: [documents]
+      summary: Bulk upsert documents
+      description: >-
+        Requires a `write`-role key scoped to this index (or unscoped). Up to `MAX_BATCH`
+        (default 500) documents per request, validated and indexed in one transaction: either
+        every document lands or none do. Duplicate `id`s within the same batch are rejected.
+      x-stack-visibility: authenticated
+      x-required-role: write
+      x-index-scoped: true
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpsertRequest"
+      responses:
+        "200":
+          description: Counts of created vs. updated documents.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/UpsertResult"
+        "400":
+          description: >-
+            `INVALID_DOCUMENT` (a document fails domain validation: missing/empty `title`,
+            disallowed `attrs` key, duplicate `id`s in the batch, ...) or `VALIDATION_FAILED`
+            (body fails schema validation).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/IndexNotFound"
+        "413":
+          description: >-
+            `BATCH_TOO_LARGE` (more than `MAX_BATCH` documents in the request) or
+            `DOCUMENT_TOO_LARGE` (one document's serialized size exceeds `MAX_DOC_BYTES`, default
+            65536 bytes).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+        "429":
+          $ref: "#/components/responses/RateLimited"
+
+    get:
+      operationId: search.documents.browse
+      tags: [documents]
+      summary: Browse documents (no query)
+      description: >-
+        Requires a `read`-role key scoped to this index (or unscoped). Equivalent to an empty
+        search sorted newest-first; every returned item omits `score` entirely (it is stripped,
+        not `null`, unlike a real search hit). Default `limit` is **50** here (search's default is
+        20), clamped to `maxPage` (default 100, `MAX_PAGE`). Default `offset` is 0.
+      x-stack-visibility: authenticated
+      x-required-role: read
+      x-index-scoped: true
+      parameters:
+        - name: limit
+          in: query
+          description: Page size. Default 50, clamped to `maxPage` (default 100).
+          schema:
+            $ref: "#/components/schemas/LimitParam"
+        - name: offset
+          in: query
+          description: >-
+            Row offset. Default 0. Rejected with 400 `INVALID_QUERY` if greater than `maxOffset`
+            (default 10000, `MAX_OFFSET`).
+          schema:
+            $ref: "#/components/schemas/OffsetParam"
+      responses:
+        "200":
+          description: A page of documents, newest first.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/BrowseResponse"
+        "400":
+          description: >-
+            `INVALID_QUERY` (`offset` greater than `maxOffset`) or `VALIDATION_FAILED` (`limit`/
+            `offset` fail their pattern, or an unknown query parameter is present — this endpoint's
+            querystring schema is strict, unlike the search endpoints).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/IndexNotFound"
+        "429":
+          $ref: "#/components/responses/RateLimited"
+
+  /v1/indexes/{name}/documents/{id}:
+    parameters:
+      - $ref: "#/components/parameters/IndexName"
+      - $ref: "#/components/parameters/DocId"
+    get:
+      operationId: search.documents.get
+      tags: [documents]
+      summary: Get one document
+      description: Requires a `read`-role key scoped to this index (or unscoped).
+      x-stack-visibility: authenticated
+      x-required-role: read
+      x-index-scoped: true
+      responses:
+        "200":
+          description: The document.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [document]
+                properties:
+                  document:
+                    $ref: "#/components/schemas/DocumentView"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          description: "`INDEX_NOT_FOUND` or `DOCUMENT_NOT_FOUND`."
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+        "429":
+          $ref: "#/components/responses/RateLimited"
+
+    delete:
+      operationId: search.documents.delete
+      tags: [documents]
+      summary: Delete one document
+      description: Requires a `write`-role key scoped to this index (or unscoped).
+      x-stack-visibility: authenticated
+      x-required-role: write
+      x-index-scoped: true
+      responses:
+        "204":
+          description: Document deleted.
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          description: "`INDEX_NOT_FOUND` or `DOCUMENT_NOT_FOUND`."
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+        "429":
+          $ref: "#/components/responses/RateLimited"
+
+  /v1/indexes/{name}/search:
+    parameters:
+      - $ref: "#/components/parameters/IndexName"
+    get:
+      operationId: search.query.get
+      tags: [search]
+      summary: Search (query-string form)
+      description: >-
+        Requires a `read`-role key scoped to this index (or unscoped). Query form of the same
+        search as `POST` on this path, sharing the same response shape (`SearchResult`) — but the
+        two are intentionally **not** validated the same way:
+
+        This endpoint's querystring schema is permissive: any additional query parameter is
+        accepted as long as its value is a string of at most 2000 characters
+        (`additionalProperties: { type: string, maxLength: 2000 }`), regardless of its name. Of
+        those, only parameters whose name starts with the literal prefix `filter.` are actually
+        consumed — `filter.<attrKey>=v1,v2` becomes an AND-across-keys, OR-within-key attribute
+        filter (comma-split, one attribute key per parameter). Any other unrecognized parameter is
+        accepted by validation and then silently ignored. This dynamic `filter.*`-prefix pattern
+        cannot be expressed as a fixed OpenAPI parameter list; `filter.<key>` here documents the
+        pattern, not a literal parameter named `<key>`.
+
+        The `POST` form below is the strict opposite: `filters` is one explicit object field and
+        the request body schema rejects any unknown field (`additionalProperties: false`).
+
+        Default `limit` is **20** here (browse's default is 50), clamped to `maxPage` (default
+        100). Default `offset` is 0, `sort` is `relevance`, `highlight` is `false`.
+      x-stack-visibility: authenticated
+      x-required-role: read
+      x-index-scoped: true
+      parameters:
+        - name: q
+          in: query
+          description: >-
+            Search text: words are AND'd, `"phrases"` match as a unit, `-word` excludes, the last
+            word matches as a prefix. Empty or omitted means "browse" (no ranking, `score` is
+            `null` on every hit).
+          schema:
+            type: string
+            maxLength: 500
+        - name: limit
+          in: query
+          description: Page size. Default 20, clamped to `maxPage` (default 100).
+          schema:
+            $ref: "#/components/schemas/LimitParam"
+        - name: offset
+          in: query
+          description: >-
+            Row offset. Default 0. Rejected with 400 `INVALID_QUERY` if greater than `maxOffset`
+            (default 10000).
+          schema:
+            $ref: "#/components/schemas/OffsetParam"
+        - name: highlight
+          in: query
+          description: >-
+            `"true"` to include `highlights` on every hit. Note: a string enum here
+            (`"true"`/`"false"`), not a real boolean — this is the querystring form; the `POST`
+            body form below uses a real JSON boolean for the same field.
+          schema:
+            type: string
+            enum: ["true", "false"]
+        - name: facets
+          in: query
+          description: >-
+            Comma-separated attribute keys to compute facet counts for (up to 20). Each key must
+            be a valid attribute key or `tags`, or this returns 400 `INVALID_QUERY`.
+          schema:
+            type: string
+            maxLength: 1000
+        - name: sort
+          in: query
+          schema:
+            $ref: "#/components/schemas/SortParam"
+        - name: filter.<key>
+          in: query
+          description: >-
+            Dynamic pattern, not a literal parameter name — see the operation description. One
+            occurrence per filtered attribute key, e.g. `filter.color=red,blue&filter.brand=Mavi`.
+          required: false
+          schema:
+            type: string
+            maxLength: 2000
+      responses:
+        "200":
+          description: Ranked (or browsed) results.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SearchResult"
+        "400":
+          description: >-
+            `INVALID_QUERY` (offset beyond `maxOffset`, more than 32 search terms, an invalid
+            `facets` key, or an invalid `filter.<key>` attribute key / more than 50 values for one
+            filter key).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/IndexNotFound"
+        "429":
+          $ref: "#/components/responses/RateLimited"
+
+    post:
+      operationId: search.query.post
+      tags: [search]
+      summary: Search (JSON body form)
+      description: >-
+        Requires a `read`-role key scoped to this index (or unscoped). Body form of the same
+        search as `GET` on this path, sharing the same response shape (`SearchResult`). Unlike the
+        `GET` form, the request body schema is strict: `additionalProperties: false`, `filters` is
+        one explicit object field (`{ "<attrKey>": ["v1", "v2"] }`, up to 20 keys, up to 50 values
+        per key), and `highlight` is a real JSON boolean. Default `limit` is 20, clamped to
+        `maxPage` (default 100); default `offset` is 0; default `sort` is `relevance`.
+      x-stack-visibility: authenticated
+      x-required-role: read
+      x-index-scoped: true
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SearchRequestBody"
+      responses:
+        "200":
+          description: Ranked (or browsed) results.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SearchResult"
+        "400":
+          description: >-
+            `INVALID_QUERY` (offset beyond `maxOffset`, more than 32 search terms, an invalid
+            `facets`/`filters` attribute key) or `VALIDATION_FAILED` (body fails schema
+            validation, e.g. an unknown field).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/IndexNotFound"
+        "429":
+          $ref: "#/components/responses/RateLimited"
+
+  /v1/indexes/{name}/suggest:
+    parameters:
+      - $ref: "#/components/parameters/IndexName"
+    get:
+      operationId: search.suggest
+      tags: [search]
+      summary: Title prefix suggestions
+      description: >-
+        Requires a `read`-role key scoped to this index (or unscoped). Type-ahead on titles only:
+        folds and tokenizes `q`, matches titles whose words start with the typed words. Response
+        items carry **only** `id` and `title` — this is not the full `DocumentView` returned by
+        search/browse/get.
+      x-stack-visibility: authenticated
+      x-required-role: read
+      x-index-scoped: true
+      parameters:
+        - name: q
+          in: query
+          required: true
+          schema:
+            type: string
+            minLength: 1
+            maxLength: 200
+        - name: limit
+          in: query
+          description: Default 10, clamped to `maxPage` (default 100).
+          schema:
+            $ref: "#/components/schemas/LimitParam"
+      responses:
+        "200":
+          description: Up to `limit` title matches.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SuggestResponse"
+        "400":
+          $ref: "#/components/responses/ValidationFailed"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/IndexNotFound"
+        "429":
+          $ref: "#/components/responses/RateLimited"
+
+  /v1/stats:
+    get:
+      operationId: search.stats.get
+      tags: [stats]
+      summary: Aggregate stats
+      description: >-
+        Requires a `read`-role key. Not index-path-scoped (there is no `:name` parameter), but the
+        aggregation itself only includes indexes visible to the key's own scope, unlike
+        `GET /metrics` which reports every index regardless of scope.
+      x-stack-visibility: authenticated
+      x-required-role: read
+      x-index-scoped: true
+      responses:
+        "200":
+          description: Aggregate counters across visible indexes.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/StatsResponse"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "429":
+          $ref: "#/components/responses/RateLimited"
+
+components:
+  securitySchemes:
+    BearerAuth:
+      type: http
+      scheme: bearer
+      description: >-
+        `Authorization: Bearer <secret>`. Keys are configured as `id:secret[:role[:indexes]]`;
+        `role` is `read`, `write` or `readwrite` (default), and `indexes` is an optional
+        `+`-joined allowlist of index names (omitted = every index). A route whose path names an
+        index (`:name`) is scope-gated: a key with a non-null index list may only touch indexes in
+        that list, and gets 403 `FORBIDDEN` for any other index, including one that does not exist
+        yet. Missing/invalid credentials return 401 `UNAUTHORIZED` with a `www-authenticate:
+        Bearer` header; an insufficient role or an out-of-scope index both return 403 `FORBIDDEN`.
+
+  parameters:
+    IndexName:
+      name: name
+      in: path
+      required: true
+      schema:
+        $ref: "#/components/schemas/IndexNameValue"
+    DocId:
+      name: id
+      in: path
+      required: true
+      schema:
+        type: string
+        minLength: 1
+        maxLength: 200
+
+  responses:
+    Unauthorized:
+      description: Missing or invalid API key.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorEnvelope"
+    Forbidden:
+      description: >-
+        `FORBIDDEN` — the API key's role does not permit this operation, or the key is scoped to a
+        different set of indexes and this index is not in it.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorEnvelope"
+    RateLimited:
+      description: >-
+        `RATE_LIMITED` — more than `RATE_LIMIT_MAX` (default 1200) requests in the trailing
+        minute for this API key. Only applies to `/v1/*` routes.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorEnvelope"
+    ValidationFailed:
+      description: "`VALIDATION_FAILED` — request fails Ajv schema validation."
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorEnvelope"
+    IndexNotFound:
+      description: "`INDEX_NOT_FOUND`."
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorEnvelope"
+    IndexExists:
+      description: "`INDEX_EXISTS` — an index with this name already exists."
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorEnvelope"
+
+  schemas:
+    IndexNameValue:
+      type: string
+      pattern: '^[a-z0-9]+([.\-_][a-z0-9]+)*$'
+      maxLength: 80
+
+    Error:
+      type: object
+      required: [code, message]
+      properties:
+        code:
+          type: string
+          description: Stable machine-readable error code, e.g. `INDEX_NOT_FOUND`.
+        message:
+          type: string
+        details:
+          description: >-
+            Present only on some errors. An object for a domain error's extra context, or an
+            array of `{ path, message, params }` for `VALIDATION_FAILED`.
+
+    ErrorEnvelope:
+      type: object
+      required: [error]
+      properties:
+        error:
+          $ref: "#/components/schemas/Error"
+
+    LimitParam:
+      type: string
+      description: 1-1000 as a plain decimal string, no leading zero.
+      pattern: '^([1-9]|[1-9][0-9]|[1-9][0-9][0-9]|1000)$'
+
+    OffsetParam:
+      type: string
+      description: 0 or a positive decimal string, no leading zero.
+      pattern: '^(0|[1-9][0-9]{0,6})$'
+
+    SortParam:
+      type: string
+      enum: [relevance, newest, oldest]
+
+    Weights:
+      type: object
+      description: Column weights for ranking; higher counts more.
+      additionalProperties: false
+      required: [title, body, tags]
+      properties:
+        title:
+          type: number
+        body:
+          type: number
+        tags:
+          type: number
+
+    WeightsInput:
+      type: object
+      description: >-
+        Partial weights; omitted fields keep their current value (create: the service default
+        `{ title: 5, body: 1, tags: 3 }`). Each given value must be between 0 and 100.
+      additionalProperties: false
+      properties:
+        title:
+          type: number
+        body:
+          type: number
+        tags:
+          type: number
+
+    FacetKeys:
+      type: array
+      description: Attribute keys the console offers as filter groups. At most 20.
+      maxItems: 20
+      items:
+        type: string
+        minLength: 1
+        maxLength: 64
+
+    IndexView:
+      type: object
+      required:
+        - name
+        - description
+        - weights
+        - facets
+        - documents
+        - lastIndexedAt
+        - searchesSinceStart
+        - createdBy
+        - createdAt
+        - updatedAt
+      properties:
+        name:
+          type: string
+        description:
+          type: string
+        weights:
+          $ref: "#/components/schemas/Weights"
+        facets:
+          type: array
+          items:
+            type: string
+        documents:
+          type: integer
+          description: Live document count.
+        lastIndexedAt:
+          type: [string, "null"]
+          format: date-time
+        searchesSinceStart:
+          type: integer
+          description: Search requests served since process start (resets on restart, not persisted).
+        createdBy:
+          type: string
+          description: API key id that created the index.
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+
+    IndexResponse:
+      type: object
+      required: [index]
+      properties:
+        index:
+          $ref: "#/components/schemas/IndexView"
+
+    IndexListResponse:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/IndexView"
+
+    CreateIndexRequest:
+      type: object
+      additionalProperties: false
+      required: [name]
+      properties:
+        name:
+          $ref: "#/components/schemas/IndexNameValue"
+        description:
+          type: string
+          maxLength: 500
+        weights:
+          $ref: "#/components/schemas/WeightsInput"
+        facets:
+          $ref: "#/components/schemas/FacetKeys"
+
+    PatchIndexRequest:
+      type: object
+      additionalProperties: false
+      minProperties: 1
+      properties:
+        description:
+          type: string
+          maxLength: 500
+        weights:
+          $ref: "#/components/schemas/WeightsInput"
+        facets:
+          $ref: "#/components/schemas/FacetKeys"
+
+    ClearResult:
+      type: object
+      required: [removed]
+      properties:
+        removed:
+          type: integer
+          description: Number of documents deleted.
+
+    DocumentInput:
+      type: object
+      additionalProperties: false
+      required: [id, title]
+      properties:
+        id:
+          type: string
+          minLength: 1
+          maxLength: 200
+        title:
+          type: string
+          description: Required; rejected with 400 `INVALID_DOCUMENT` if empty after trimming.
+        body:
+          type: string
+        tags:
+          type: array
+          maxItems: 100
+          items:
+            type: string
+            maxLength: 100
+        attrs:
+          type: object
+          description: >-
+            Arbitrary keys (letters/digits/`_.-`, starting with a letter, ≤64 chars, not
+            `"tags"`). Each value is a string, number, boolean, or an array of those — every
+            scalar (array elements included) becomes a filterable/facetable value. At most
+            `MAX_ATTRS` (default 50) values across all keys combined, or 400 `INVALID_DOCUMENT`.
+        url:
+          type: string
+          maxLength: 2048
+
+    UpsertRequest:
+      type: object
+      additionalProperties: false
+      required: [documents]
+      properties:
+        documents:
+          type: array
+          minItems: 1
+          maxItems: 10000
+          items:
+            $ref: "#/components/schemas/DocumentInput"
+
+    UpsertResult:
+      type: object
+      required: [created, updated]
+      properties:
+        created:
+          type: integer
+        updated:
+          type: integer
+
+    DocumentView:
+      type: object
+      required: [id, title, body, tags, attrs, url, source, createdAt, updatedAt]
+      properties:
+        id:
+          type: string
+        title:
+          type: string
+        body:
+          type: string
+        tags:
+          type: array
+          items:
+            type: string
+        attrs:
+          type: object
+        url:
+          type: [string, "null"]
+        source:
+          type: string
+          description: API key id that last wrote this document.
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+
+    BrowseResponse:
+      type: object
+      required: [items, total, limit, offset]
+      properties:
+        items:
+          type: array
+          description: Documents, newest first. No `score` field (stripped, not `null`).
+          items:
+            $ref: "#/components/schemas/DocumentView"
+        total:
+          type: integer
+        limit:
+          type: integer
+        offset:
+          type: integer
+
+    Highlights:
+      type: object
+      description: "Present on a hit only when the request asked for `highlight=true`/`highlight: true`."
+      required: [title, body]
+      properties:
+        title:
+          type: string
+          description: Original `title`, HTML-escaped, with matches wrapped in `<mark>`.
+        body:
+          type: string
+          description: ~160-character window around the first match in `body`, `<mark>`-wrapped.
+
+    SearchHit:
+      allOf:
+        - $ref: "#/components/schemas/DocumentView"
+        - type: object
+          required: [score]
+          properties:
+            score:
+              type: [number, "null"]
+              description: >-
+                Higher is more relevant. `null` when the query had no usable search terms (a pure
+                browse/empty query) — not present-but-zero, genuinely `null`.
+            highlights:
+              $ref: "#/components/schemas/Highlights"
+
+    FacetValue:
+      type: object
+      required: [value, count]
+      properties:
+        value:
+          type: string
+        count:
+          type: integer
+
+    SearchResult:
+      type: object
+      required: [total, limit, offset, query, hits, facets]
+      properties:
+        total:
+          type: integer
+        limit:
+          type: integer
+        offset:
+          type: integer
+        query:
+          type: string
+          description: >-
+            The parsed FTS5 match expression actually run (not the raw `q`/`filter.*` input) —
+            empty string when the input had no usable terms.
+        hits:
+          type: array
+          items:
+            $ref: "#/components/schemas/SearchHit"
+        facets:
+          type: object
+          description: One entry per requested facet key, keyed by that attribute name.
+          additionalProperties:
+            type: array
+            items:
+              $ref: "#/components/schemas/FacetValue"
+
+    SearchRequestBody:
+      type: object
+      additionalProperties: false
+      properties:
+        q:
+          type: string
+          maxLength: 500
+        filters:
+          type: object
+          description: AND across keys, OR within a key. Up to 20 keys, up to 50 values per key.
+          maxProperties: 20
+          additionalProperties:
+            type: array
+            maxItems: 50
+            items:
+              type: string
+              maxLength: 200
+        facets:
+          $ref: "#/components/schemas/FacetKeys"
+        limit:
+          type: integer
+          minimum: 1
+          maximum: 1000
+          description: Default 20 when omitted, clamped to `maxPage` (default 100).
+        offset:
+          type: integer
+          minimum: 0
+          description: Default 0 when omitted.
+        highlight:
+          type: boolean
+          description: Real JSON boolean here (the `GET` form uses a `"true"`/`"false"` string).
+        sort:
+          $ref: "#/components/schemas/SortParam"
+
+    SuggestItem:
+      type: object
+      required: [id, title]
+      properties:
+        id:
+          type: string
+        title:
+          type: string
+
+    SuggestResponse:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          description: Title matches only — not the full `DocumentView`.
+          items:
+            $ref: "#/components/schemas/SuggestItem"
+
+    StatsItem:
+      type: object
+      required: [name, documents, searchesSinceStart, lastIndexedAt]
+      properties:
+        name:
+          type: string
+        documents:
+          type: integer
+        searchesSinceStart:
+          type: integer
+        lastIndexedAt:
+          type: [string, "null"]
+          format: date-time
+
+    StatsResponse:
+      type: object
+      required: [indexes, documents, searchesSinceStart, dbBytes, items]
+      properties:
+        indexes:
+          type: integer
+          description: Count of visible indexes.
+        documents:
+          type: integer
+          description: Sum of documents across visible indexes.
+        searchesSinceStart:
+          type: integer
+          description: Sum of searchesSinceStart across visible indexes.
+        dbBytes:
+          type: integer
+          description: On-disk database size in bytes (not index-scoped — whole database file).
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/StatsItem"
+
+    HealthResponse:
+      type: object
+      required: [status]
+      properties:
+        status:
+          type: string
+          enum: [ok]
+
+    ReadyResponse:
+      type: object
+      required: [status]
+      properties:
+        status:
+          type: string
+          enum: [ok]
+
+    ReadyUnavailableResponse:
+      type: object
+      required: [status, error]
+      properties:
+        status:
+          type: string
+          enum: [unavailable]
+        error:
+          type: string
+
+    InfoResponse:
+      type: object
+      required: [service, version, apiVersion, capabilities, schemaVersion, serviceCore]
+      properties:
+        service:
+          type: string
+          enum: [search]
+        version:
+          type: string
+          description: This instance's package.json version.
+        apiVersion:
+          type: string
+          enum: [v1]
+        capabilities:
+          type: array
+          items:
+            type: string
+          description: Static list for this service — bm25-ranking, facets, highlights, suggestions.
+        schemaVersion:
+          type: integer
+          description: Open SQLite schema version (`PRAGMA user_version`).
+        serviceCore:
+          type: string
+          description: Version of `@atc-web/service-core` actually running.
