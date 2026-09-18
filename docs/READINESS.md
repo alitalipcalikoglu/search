@@ -192,9 +192,11 @@ error body but only additionally logged for 500s via `request.log.error({ err },
 
 ## Tracing
 Accepts whatever `X-Request-Id` the caller sends (no trust gate — internal service reached only via
-gateway, console or peers) and generates one when absent. Does **not** parse, forward, or log
-`traceparent` — implemented in `gateway` and `console` (Stage 10). No outbound calls happen
-in the request path, so there is nothing to propagate onward regardless.
+gateway, console or peers) and generates one when absent. Also parses an inbound `traceparent` via
+`@atc-web/service-core`'s `registerRequestContext`, trust-gated on `TRUST_PROXY` (same boundary as
+`X-Forwarded-*`): trusted, the caller's trace-id is continued with a fresh span-id; untrusted or
+malformed, a fresh trace is started. Both `traceId`/`spanId` are logged on every request line. No
+outbound calls happen in the request path, so there is nothing to propagate onward regardless.
 
 ## Security model
 Bearer API keys (`SEARCH_API_KEYS=id:secret[:role[:indexes]]`), compared via SHA-256 +

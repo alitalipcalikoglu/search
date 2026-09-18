@@ -134,8 +134,9 @@ on restart and would split unreconciled across two instances. See
 
 ## Observability
 
-Requests are logged with `reqId` (accepts or generates `X-Request-Id`; no `traceparent` support —
-implemented in gateway and console so far). `/health` is a static check; `/ready` pings the database, cached for 10s.
+Requests are logged with `reqId` (accepts or generates `X-Request-Id`) and `traceId`/`spanId` (a
+trusted inbound `traceparent`, gated on `TRUST_PROXY`, continues the caller's trace with a fresh
+span-id for this hop; see [OBSERVABILITY.md](../stack/docs/OBSERVABILITY.md)). `/health` is a static check; `/ready` pings the database, cached for 10s.
 Unlike `ratelimit`, there is no durable table backing search-query counts — `search_queries_total`
 and `searchesSinceStart` are the same in-memory counter everywhere they appear. See
 [docs/READINESS.md](docs/READINESS.md) for the full contract.
