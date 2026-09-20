@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: search
-  version: "1.0.0"
+  version: "1.1.0"
   description: >-
     Full-text search over your own data: named indexes, bulk-indexed documents, BM25-ranked
     queries with field weights, attribute filters and facet counts, highlighted results, prefix
